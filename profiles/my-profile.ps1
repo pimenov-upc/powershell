@@ -1,4 +1,41 @@
+function Format-Size {
+    param([long]$Bytes)
+    
+    if ($Bytes -ge 1TB) {
+        return "{0:F1} TB" -f ($Bytes / 1TB)
+    } elseif ($Bytes -ge 1GB) {
+        return "{0:F1} GB" -f ($Bytes / 1GB)
+    } elseif ($Bytes -ge 1MB) {
+        return "{0:F1} MB" -f ($Bytes / 1MB)
+    } elseif ($Bytes -ge 1KB) {
+        return "{0:F1} KB" -f ($Bytes / 1KB)
+    } else {
+        return "{0} B" -f $Bytes
+    }
+}
+
 # Git helper functions
+
+function git-config {
+    param (
+        [Parameter(Mandatory, HelpMessage = "Введіть ключ конфігурації")]
+        [string]$Key,
+        [string]$Value,
+        [string]$Scope = "global"
+    )
+
+    if ($Value) {
+        git config --$Scope $Key $Value
+    } else {
+        git config --$Scope $Key
+    }
+}
+function git-config-list {
+    param (
+        [string]$Scope = "global"
+    )
+    git config --$Scope --list
+}
 function init { git init }
 function status { git status }
 function add { 
@@ -653,13 +690,32 @@ function merge {
 
 # Shell functions from linux
 
-Set-Alias -Name which -Value search
-
 Remove-Alias -Name pwd -Force -ErrorAction SilentlyContinue
 Remove-Alias -Name cat -Force -ErrorAction SilentlyContinue
 Remove-Alias -Name ls -Force -ErrorAction SilentlyContinue
+Remove-Alias -Name rn -Force -ErrorAction SilentlyContinue
+Remove-Alias -Name rm -Force -ErrorAction SilentlyContinue
 
-function search {
+function rm {
+    param (
+        [Parameter(Mandatory, HelpMessage = "Введіть шлях до файлу(ів)")]
+        [string[]]$Path,
+        [switch]$Recurse,
+        [switch]$Force
+    )
+
+    $params = @{
+        Path = $Path
+        ErrorAction = 'SilentlyContinue'
+    }
+
+    if ($Recurse) { $params.Recurse = $true }
+    if ($Force)   { $params.Force   = $true }
+
+    Remove-Item @params
+}
+
+function which {
     param (
         [string]$Path = ".",
         [Parameter(Mandatory, HelpMessage = "Введіть назву файлу або її частину")]
@@ -878,11 +934,17 @@ function grep {
             if ($Context -gt 0) { $searchParams.Context = $Context, $Context }
             if ($Invert) { $searchParams.NotMatch = $true }
             
-            # Конвертуємо input в рядки якщо потрібно
+            # Конвертуємо input в рядки якщо потрібно.
+            # Для HistoryInfo та схожих об'єктів пріоритетно беремо CommandLine,
+            # щоб `history | grep ...` стабільно працював без додаткових лапок.
             $stringInput = $pipelineInput | ForEach-Object {
                 if ($_ -is [string]) {
                     $_
-                } else {
+                }
+                elseif ($_.PSObject.Properties['CommandLine'] -and $_.CommandLine) {
+                    [string]$_.CommandLine
+                }
+                else {
                     $_.ToString()
                 }
             }
@@ -1060,23 +1122,7 @@ function rn {
 }
 
 # Usefulness functions
-function Format-Size {
-    param([long]$Bytes)
-    
-    if ($Bytes -ge 1TB) {
-        return "{0:F1} TB" -f ($Bytes / 1TB)
-    } elseif ($Bytes -ge 1GB) {
-        return "{0:F1} GB" -f ($Bytes / 1GB)
-    } elseif ($Bytes -ge 1MB) {
-        return "{0:F1} MB" -f ($Bytes / 1MB)
-    } elseif ($Bytes -ge 1KB) {
-        return "{0:F1} KB" -f ($Bytes / 1KB)
-    } else {
-        return "{0} B" -f $Bytes
-    }
-}
-
-function vscode-extensions {
+function vscode-ext {
     param (
         [string]$File = "vscode-ext",
         [switch]$Install,
@@ -1123,6 +1169,41 @@ function markdown {
     Show-Markdown -Path $Path
 }
 
+function goto {
+    param (
+        [Parameter(Mandatory, HelpMessage = "Введіть шлях до теки")]
+        [string]$Path
+    )
+    Set-Location -Path (Join-Path -Path "$HOME/Projects" -ChildPath $Path)
+}
+
+function clean-port {
+    params (
+        [Parameter(Mandatory, HelpMessage = "Введіть номер порту")]
+        [int]$Port
+    )
+    Write-Host "Checking for processes using port $Port..." -ForegroundColor Cyan
+    $processes = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique
+    if ($processes.Count -eq 0) {
+        Write-Host "No processes found using port $Port." -ForegroundColor Green
+        return
+    }
+    foreach ($pid in $processes) {
+        try {
+            $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+            if ($proc) {
+                Write-Host "Killing process $($proc.ProcessName) (PID: $pid) using port $Port..." -ForegroundColor Yellow
+                Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+                Write-Host "Process $($proc.ProcessName) (PID: $pid) killed." -ForegroundColor Green
+            } else {
+                Write-Host "Process with PID $pid not found." -ForegroundColor Red
+            }
+        } catch {
+            Write-Host "Failed to kill process with PID ${pid}: $_" -ForegroundColor Red
+        }
+    }
+}
+
 #Set-Alias -Name edit -Value notepad
 #Remove-Alias -Name edit -Force -ErrorAction SilentlyContinue
 
@@ -1133,61 +1214,6 @@ function notepad {
     )
     & "C:\Program Files\Notepad++\notepad++.exe" $File
 } 
-
-# Custom Prompt
-# Set to "YES" to show time in prompt, "NO" to hide
-$Env:SHOW_PROMPT_TIME = "NO"
-
-function prompt {
-    $uptime = Get-Uptime -ErrorAction SilentlyContinue
-    $username = $env:USERNAME + ":"
-    $currentBranch = current
-    $folder = Split-Path -Path (Get-Location) -Leaf
-    $nodeVersion = if (Get-Command node -ErrorAction SilentlyContinue) { 
-        (node -v).Trim() 
-    } else { 
-        $null 
-    }
-    $packageJson = Test-Path package.json -PathType Leaf
-    $currentTime = $(Get-Date -Format "dddd dd-MM-yyyy HH:mm")
-    $currentBranchIsModified = $false
-
-    $gitStatus = git status --porcelain 2>$null
-    $countModifiedFiles = (git status -s | Measure-Object -Line).Lines
-    $modifiedInfo = git diff --shortstat
-
-    if ($gitStatus -and $gitStatus.Trim()) {
-        $currentBranchIsModified = $true
-    }
-
-    if ($Env:SHOW_PROMPT_TIME -eq "YES") {
-        if ($uptime) {
-            Write-Host "💻 Uptime: " -NoNewLine -ForegroundColor Gray
-            Write-Host "$uptime, " -NoNewLine -ForegroundColor Magenta
-        } else {
-            Write-Host "💻 Uptime: Unknown " -NoNewLine -ForegroundColor Gray
-        }
-        Write-Host "⌚ $currentTime " -ForegroundColor Yellow
-    }
-    Write-Host "🫀 $username "  -NoNewLine -ForegroundColor Cyan
-    Write-Host "📂 $folder " -NoNewLine -ForegroundColor Green
-
-    if ($currentBranch) {
-        Write-Host "🌵 git:" -NoNewLine -ForegroundColor White
-        Write-Host $currentBranch -NoNewLine -ForegroundColor Yellow
-        if ($currentBranchIsModified) {
-            Write-Host " [M:$countModifiedFiles]" -NoNewLine -ForegroundColor Red
-        }
-    }
-
-    if ($packageJson -and $nodeVersion) {
-        Write-Host " [👽 $nodeVersion] " -NoNewLine -ForegroundColor Green
-    }
-
-    Write-Host ""
-    Write-Host "└─❯" -NoNewLine -ForegroundColor Yellow
-    return " "
-}
 
 # Maven utils (for Binder projects)
 
@@ -1216,6 +1242,12 @@ function b-install {
 }
 
 # NPM
+Remove-Alias -Name start -Force -ErrorAction SilentlyContinue
+Remove-Alias -Name dev -Force -ErrorAction SilentlyContinue
+Remove-Alias -Name build -Force -ErrorAction SilentlyContinue
+Remove-Alias -Name test -Force -ErrorAction SilentlyContinue
+Remove-Alias -Name lint -Force -ErrorAction SilentlyContinue
+
 function start {
     param (
         [string]$Script
@@ -1678,4 +1710,59 @@ if ($IsLinux -and (Test-Path "$HOME/.cargo/env")) {
             $env:PATH = $matches[1]
         }
     }
+}
+
+# Custom Prompt
+# Set to "YES" to show time in prompt, "NO" to hide
+$Env:SHOW_PROMPT_TIME = "NO"
+
+function prompt {
+    $uptime = Get-Uptime -ErrorAction SilentlyContinue
+    $username = $env:USERNAME + ":"
+    $currentBranch = current
+    $folder = Split-Path -Path (Get-Location) -Leaf
+    $nodeVersion = if (Get-Command node -ErrorAction SilentlyContinue) { 
+        (node -v).Trim() 
+    } else { 
+        $null 
+    }
+    $packageJson = Test-Path package.json -PathType Leaf
+    $currentTime = $(Get-Date -Format "dddd dd-MM-yyyy HH:mm")
+    $currentBranchIsModified = $false
+
+    $gitStatus = git status --porcelain 2>$null
+    $countModifiedFiles = (git status -s | Measure-Object -Line).Lines
+    $modifiedInfo = git diff --shortstat
+
+    if ($gitStatus -and $gitStatus.Trim()) {
+        $currentBranchIsModified = $true
+    }
+
+    if ($Env:SHOW_PROMPT_TIME -eq "YES") {
+        if ($uptime) {
+            Write-Host "💻 Uptime: " -NoNewLine -ForegroundColor Gray
+            Write-Host "$uptime, " -NoNewLine -ForegroundColor Magenta
+        } else {
+            Write-Host "💻 Uptime: Unknown " -NoNewLine -ForegroundColor Gray
+        }
+        Write-Host "⌚ $currentTime " -ForegroundColor Yellow
+    }
+    Write-Host "🫀 $username "  -NoNewLine -ForegroundColor Cyan
+    Write-Host "📂 $folder " -NoNewLine -ForegroundColor Green
+
+    if ($currentBranch) {
+        Write-Host "🌵 git:" -NoNewLine -ForegroundColor White
+        Write-Host $currentBranch -NoNewLine -ForegroundColor Yellow
+        if ($currentBranchIsModified) {
+            Write-Host " [M:$countModifiedFiles]" -NoNewLine -ForegroundColor Red
+        }
+    }
+
+    if ($packageJson -and $nodeVersion) {
+        Write-Host " [👽 $nodeVersion] " -NoNewLine -ForegroundColor Green
+    }
+
+    Write-Host ""
+    Write-Host "└─❯" -NoNewLine -ForegroundColor Yellow
+    return " "
 }
