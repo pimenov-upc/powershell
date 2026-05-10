@@ -695,6 +695,17 @@ Remove-Alias -Name cat -Force -ErrorAction SilentlyContinue
 Remove-Alias -Name ls -Force -ErrorAction SilentlyContinue
 Remove-Alias -Name rn -Force -ErrorAction SilentlyContinue
 Remove-Alias -Name rm -Force -ErrorAction SilentlyContinue
+Remove-Alias -Name ts -Force -ErrorAction SilentlyContinue
+
+function ts {
+    param (
+        [string]$Format = "yyyy-MM-dd HH:mm:ss"
+    )
+
+    process {
+        "$(Get-Date -Format $Format) $_"
+    }
+}
 
 function rm {
     param (
