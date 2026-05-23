@@ -48,7 +48,7 @@ function add {
 function branch { git branch }
 function diff { git diff }
 function pull { git pull }
-function del-branch { 
+function del-local { 
     param (
         [Parameter(Mandatory, HelpMessage = "Введіть назву гілки")]
         [string]$Branch
@@ -331,7 +331,7 @@ function update {
     }
 }
 
-function upstream {
+function set-upstream {
 	param (
       [Parameter(Mandatory, HelpMessage = "Введіть назву гілки")]
 	  [string]$Branch,
@@ -695,17 +695,6 @@ Remove-Alias -Name cat -Force -ErrorAction SilentlyContinue
 Remove-Alias -Name ls -Force -ErrorAction SilentlyContinue
 Remove-Alias -Name rn -Force -ErrorAction SilentlyContinue
 Remove-Alias -Name rm -Force -ErrorAction SilentlyContinue
-Remove-Alias -Name ts -Force -ErrorAction SilentlyContinue
-
-function ts {
-    param (
-        [string]$Format = "yyyy-MM-dd HH:mm:ss"
-    )
-
-    process {
-        "$(Get-Date -Format $Format) $_"
-    }
-}
 
 function rm {
     param (
@@ -1132,6 +1121,13 @@ function rn {
 	Rename-Item -Path $Path -NewName $NewName
 }
 
+function reboot {
+    params (
+        [switch]$Force
+    )
+    Restart-Computer -Force:$Force
+}
+
 # Usefulness functions
 function vscode-ext {
     param (
@@ -1189,42 +1185,34 @@ function goto {
 }
 
 function clean-port {
-    params (
+    param (
         [Parameter(Mandatory, HelpMessage = "Введіть номер порту")]
         [int]$Port
     )
     Write-Host "Checking for processes using port $Port..." -ForegroundColor Cyan
-    $processes = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique
-    if ($processes.Count -eq 0) {
+    $processes = @(
+        Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty OwningProcess -Unique
+    )
+    if (-not $processes) {
         Write-Host "No processes found using port $Port." -ForegroundColor Green
         return
     }
-    foreach ($pid in $processes) {
+    foreach ($processId in $processes) {
         try {
-            $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+            $proc = Get-Process -Id $processId -ErrorAction SilentlyContinue
             if ($proc) {
-                Write-Host "Killing process $($proc.ProcessName) (PID: $pid) using port $Port..." -ForegroundColor Yellow
-                Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
-                Write-Host "Process $($proc.ProcessName) (PID: $pid) killed." -ForegroundColor Green
+                Write-Host "Killing process $($proc.ProcessName) (PID: $processId) using port $Port..." -ForegroundColor Yellow
+                Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+                Write-Host "Process $($proc.ProcessName) (PID: $processId) killed." -ForegroundColor Green
             } else {
-                Write-Host "Process with PID $pid not found." -ForegroundColor Red
+                Write-Host "Process with PID $processId not found." -ForegroundColor Red
             }
         } catch {
-            Write-Host "Failed to kill process with PID ${pid}: $_" -ForegroundColor Red
+            Write-Host "Failed to kill process with PID ${processId}: $_" -ForegroundColor Red
         }
     }
 }
-
-#Set-Alias -Name edit -Value notepad
-#Remove-Alias -Name edit -Force -ErrorAction SilentlyContinue
-
-function notepad {
-    param (
-        [Parameter(Mandatory, HelpMessage = "Введіть шлях до файлу")]
-        [string]$File
-    )
-    & "C:\Program Files\Notepad++\notepad++.exe" $File
-} 
 
 # Maven utils (for Binder projects)
 
@@ -1737,6 +1725,11 @@ function prompt {
     } else { 
         $null 
     }
+    $npmVersion = if (Get-Command npm -ErrorAction SilentlyContinue) { 
+        (npm -v).Trim() 
+    } else { 
+        $null 
+    }
     $packageJson = Test-Path package.json -PathType Leaf
     $currentTime = $(Get-Date -Format "dddd dd-MM-yyyy HH:mm")
     $currentBranchIsModified = $false
@@ -1771,9 +1764,86 @@ function prompt {
 
     if ($packageJson -and $nodeVersion) {
         Write-Host " [👽 $nodeVersion] " -NoNewLine -ForegroundColor Green
+        if ($npmVersion) {
+            Write-Host "[📦 $npmVersion]" -NoNewLine -ForegroundColor Blue
+        }
     }
 
     Write-Host ""
     Write-Host "└─❯" -NoNewLine -ForegroundColor Yellow
     return " "
+}
+
+function lines {
+    param (
+        [Parameter(Mandatory, Position = 0, HelpMessage = "Введіть шлях до файлу або теки")]
+        [Alias("File")]
+        [string]$Path,
+        [string[]]$Extensions = @("*.ts", "*.js", "*.css", "*.scss", "*.json", "*.md", "*.vue")
+    )
+
+    if (Test-Path $Path -PathType Leaf) {
+        $resolvedPath = (Resolve-Path -Path $Path).Path
+        $lines = (Get-Content -Path $resolvedPath -ErrorAction SilentlyContinue | Measure-Object -Line).Lines
+
+        Write-Host " "
+        Write-Host "Line count report:" -ForegroundColor Cyan
+        [PSCustomObject]@{
+            Type = "File"
+            Path = $resolvedPath
+            Lines = $lines
+        } | Format-Table -AutoSize
+        Write-Host " "
+        return $lines
+    }
+
+    if (Test-Path $Path -PathType Container) {
+        $resolvedPath = (Resolve-Path -Path $Path).Path
+        $normalizedExtensions = $Extensions |
+            ForEach-Object {
+                $ext = $_.Trim().ToLower()
+                if ($ext -match "\.") {
+                    $ext.Substring($ext.LastIndexOf(".") + 1)
+                } else {
+                    $ext.TrimStart("*").TrimStart(".")
+                }
+            } |
+            Where-Object { $_ -ne "" } |
+            Select-Object -Unique
+
+        $files = Get-ChildItem -Path $resolvedPath -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object {
+                $extension = $_.Extension.TrimStart(".").ToLower()
+                $normalizedExtensions -contains $extension
+            }
+
+        if (-not $files -or $files.Count -eq 0) {
+            Write-Host "No files found in '$resolvedPath' for selected extensions: $($Extensions -join ', ')" -ForegroundColor Yellow
+            return 0
+        }
+
+        $report = $files | ForEach-Object {
+            $lineCount = (Get-Content -Path $_.FullName -ErrorAction SilentlyContinue | Measure-Object -Line).Lines
+            [PSCustomObject]@{
+                File = $_.FullName.Replace($resolvedPath, ".")
+                Lines = $lineCount
+            }
+        }
+
+        $totalLines = ($report | Measure-Object -Property Lines -Sum).Sum
+
+        Write-Host " "
+        Write-Host "Line count report:" -ForegroundColor Cyan
+        Write-Host "Path: $resolvedPath" -ForegroundColor Gray
+        Write-Host "Extensions: $($Extensions -join ', ')" -ForegroundColor Gray
+        Write-Host "Files: $($report.Count)" -ForegroundColor Gray
+        Write-Host "Total lines: $totalLines" -ForegroundColor Green
+        # Write-Host " "
+        # $report | Sort-Object -Property Lines -Descending | Format-Table -AutoSize
+        # Write-Host " "
+        return
+    }
+
+    Write-Host "Path not found: $Path" -ForegroundColor Red
+        # return 0
 }
