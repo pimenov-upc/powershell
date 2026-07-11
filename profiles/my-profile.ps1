@@ -1266,6 +1266,13 @@ function Normalize-NpmScriptArguments {
         $normalizedArgs = @($normalizedArgs | Select-Object -Skip 1)
     }
 
+    # PowerShell can bind calls like `build -- --mt` as Script='--mt'.
+    # In this case treat Script as an extra npm argument, not a script suffix.
+    if ($normalizedScript -and $normalizedScript.StartsWith('--')) {
+        $normalizedArgs = @($normalizedScript) + $normalizedArgs
+        $normalizedScript = ''
+    }
+
     return [PSCustomObject]@{
         Script = $normalizedScript
         Args = $normalizedArgs
