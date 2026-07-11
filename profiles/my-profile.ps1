@@ -580,6 +580,9 @@ function create {
 
     Write-Host "Checking out to source branch '$From'..." -ForegroundColor Cyan
     checkout $From
+    Write-Host "Pulling changes for source branch '$From'..." -ForegroundColor Cyan
+    pull
+    Write-Host " "
 
     # if ($LASTEXITCODE -eq 3) {
     #     Write-Host "Cannot create branch because multiply source branches found." -ForegroundColor Red
@@ -1247,61 +1250,108 @@ Remove-Alias -Name build -Force -ErrorAction SilentlyContinue
 Remove-Alias -Name test -Force -ErrorAction SilentlyContinue
 Remove-Alias -Name lint -Force -ErrorAction SilentlyContinue
 
-function start {
+function Normalize-NpmScriptArguments {
     param (
-        [string]$Script
+        [string]$Script,
+        [string[]]$Args
     )
 
-    if (-not $Script -or $Script.Trim() -eq '') {
-        npm start
-    } else {
-        npm run "start:$Script"
+    $normalizedScript = $Script
+    if ($normalizedScript -eq '--') {
+        $normalizedScript = ''
     }
+
+    $normalizedArgs = @($Args)
+    if ($normalizedArgs.Count -gt 0 -and $normalizedArgs[0] -eq '--') {
+        $normalizedArgs = @($normalizedArgs | Select-Object -Skip 1)
+    }
+
+    return [PSCustomObject]@{
+        Script = $normalizedScript
+        Args = $normalizedArgs
+    }
+}
+
+function Invoke-NpmScriptCommand {
+    param (
+        [Parameter(Mandatory)]
+        [string]$BaseScript,
+        [string]$Script,
+        [string[]]$Args,
+        [switch]$UseNpmShortcut
+    )
+
+    $normalized = Normalize-NpmScriptArguments -Script $Script -Args $Args
+    $resolvedScript = $normalized.Script
+    $resolvedArgs = @($normalized.Args)
+
+    $targetScript = if (-not $resolvedScript -or $resolvedScript.Trim() -eq '') {
+        $BaseScript
+    } else {
+        "${BaseScript}:$resolvedScript"
+    }
+
+    if ($resolvedArgs.Count -gt 0) {
+        npm run $targetScript -- @resolvedArgs
+        return
+    }
+
+    if ($UseNpmShortcut -and $targetScript -eq $BaseScript) {
+        npm $BaseScript
+        return
+    }
+
+    npm run $targetScript
+}
+
+function start {
+    param (
+        [string]$Script,
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Args
+    )
+
+    Invoke-NpmScriptCommand -BaseScript 'start' -Script $Script -Args $Args -UseNpmShortcut
 }
 
 function dev {
     param (
-        [string]$Script
+        [string]$Script,
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Args
     )
 
-    if (-not $Script -or $Script.Trim() -eq '') {
-        npm run dev
-    } else {
-        npm run "dev:$Script"
-    }
+    Invoke-NpmScriptCommand -BaseScript 'dev' -Script $Script -Args $Args
 }
 
 function build {
-        param (
-        [string]$Script
+    param (
+        [string]$Suffix,
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Args
     )
-    if (-not $Script -or $Script.Trim() -eq '') {
-        npm run build
-    } else {
-        npm run "build:$Script"
-    }
+
+    Invoke-NpmScriptCommand -BaseScript 'build' -Script $Suffix -Args $Args
 }
 
 function test {
-        param (
-        [string]$Script
+    param (
+        [string]$Script,
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Args
     )
-    if (-not $Script -or $Script.Trim() -eq '') {
-        npm test
-    } else {
-        npm run "test:$Script"
-    }
+
+    Invoke-NpmScriptCommand -BaseScript 'test' -Script $Script -Args $Args -UseNpmShortcut
 }
 
 function lint {
-        param (
-        [string]$Script
+    param (
+        [string]$Script,
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Args
     )
-    if (-not $Script -or $Script.Trim() -eq '') {
-        npm run lint
-    } else {
-        npm run "lint:$Script"
-    }
+
+    Invoke-NpmScriptCommand -BaseScript 'lint' -Script $Script -Args $Args
 }   
 
 # Certificates
