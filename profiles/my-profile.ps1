@@ -116,7 +116,7 @@ function fetch-branch {
 
     Write-Host " "
 
-    if ((check $Remote) -ne 0) {
+    if ((check-origin $Remote) -ne 0) {
         Write-Host "Remote '$Remote' is not reachable." -ForegroundColor Red
         return
     }
@@ -169,7 +169,7 @@ function list-remote {
 
     Write-Host " "
 
-    if ((check $Remote) -ne 0) {
+    if ((check-origin $Remote) -ne 0) {
         Write-Host "Remote '$Remote' is not reachable." -ForegroundColor Red
         return
     }
@@ -200,7 +200,7 @@ function list-remote {
 }
 
 # Check function to verify if the remote repository is reachable
-function check {
+function check-origin {
     param (
         [string]$Remote = "origin"
     )
@@ -287,7 +287,7 @@ function update {
         [string]$From = ''
     )
     
-    if ((check) -ne 0) {
+    if ((check-origin) -ne 0) {
         Write-Host "Remote is not reachable. Update aborted." -ForegroundColor Red
         return
     }
@@ -338,7 +338,7 @@ function set-upstream {
 	  [string]$Origin = 'origin'
 	)
 	
-    if ((check $Origin) -ne 0) {
+    if ((check-origin $Origin) -ne 0) {
         Write-Host "Cannot set upstream because remote '$Origin' is not reachable." -ForegroundColor Red
         return
     }
@@ -448,7 +448,7 @@ function push {
 
     Write-Host "Pushing current changes..."
 
-    if ((check $Remote) -ne 0) {
+    if ((check-origin $Remote) -ne 0) {
         Write-Host " "
         Write-Host "Cannot push, because remote '$Remote' is not reachable." -ForegroundColor Red
         Write-Host " "
@@ -668,7 +668,7 @@ function merge {
         return
     }
 
-    if ((check) -eq 0) {
+    if ((check-origin) -eq 0) {
         Write-Host "Pulling latest changes for current branch..." -ForegroundColor Cyan
         $null = git pull origin $(current)
     }
@@ -1288,6 +1288,11 @@ function Invoke-NpmScriptCommand {
         [switch]$UseNpmShortcut
     )
 
+    if (-not (Test-Path -Path (Join-Path -Path (Get-Location) -ChildPath 'package.json') -PathType Leaf)) {
+        Write-Host "package.json was not found in the current directory. Skipping npm command." -ForegroundColor Yellow
+        return
+    }
+
     $normalized = Normalize-NpmScriptArguments -Script $Script -Args $Args
     $resolvedScript = $normalized.Script
     $resolvedArgs = @($normalized.Args)
@@ -1359,6 +1364,16 @@ function lint {
     )
 
     Invoke-NpmScriptCommand -BaseScript 'lint' -Script $Script -Args $Args
+}   
+
+function check {
+    param (
+        [string]$Script,
+        [Parameter(ValueFromRemainingArguments = $true)]
+        [string[]]$Args
+    )
+
+    Invoke-NpmScriptCommand -BaseScript 'check' -Script $Script -Args $Args
 }   
 
 # Certificates
@@ -1549,7 +1564,7 @@ function help {
         Write-Host "  merge <branch> [-Verbose]    - Merge source branch into target"
         Write-Host "  clone <repo> <target> [depth] - Clone repository"
         Write-Host "  clone-one <repo> <target>    - Clone repository with depth 1"
-        Write-Host "  check [remote]               - Check if remote is reachable (default: origin)"
+        Write-Host "  check-origin [remote]               - Check if remote is reachable (default: origin)"
         Write-Host "  has-changes                  - Check if working tree has uncommitted changes (internal)"
         Write-Host "  update [branch]              - Pull changes for current or update from specified branch"
         Write-Host "  upstream <branch> [origin]   - Set upstream for branch"
@@ -1614,9 +1629,19 @@ function help {
         Write-Host "  notepad <file>               - Open file in Notepad++"
         Write-Host "  errors [count]               - Show last n errors (default: 5)"
         Write-Host "  last-error                   - Show details of last error"
-        Write-Host "  Format-Size <bytes>          - Convert bytes to readable size (internal)"
         Write-Host "  help [switches]              - Show this help"
         Write-Host "  extract-vscode-extensions [file] [-Install] [-Linux] - Export VS Code extensions"
+        Write-Host ""
+
+        Write-Host "NPM Helper Functions:" -ForegroundColor Magenta
+        Write-Host "  start [script] [-- args...]  - Run npm start or npm run start:<script>"
+        Write-Host "  dev [script] [-- args...]    - Run npm run dev or npm run dev:<script>"
+        Write-Host "  build [suffix] [-- args...]  - Run npm run build or npm run build:<suffix>"
+        Write-Host "  test [script] [-- args...]   - Run npm test or npm run test:<script>"
+        Write-Host "  lint [script] [-- args...]   - Run npm run lint or npm run lint:<script>"
+        Write-Host "  check [script] [-- args...]  - Run npm run check or npm run check:<script>"
+        Write-Host ""
+        Write-Host "  Note: if package.json is missing in current directory, npm command is skipped."
         Write-Host ""
     }
 
